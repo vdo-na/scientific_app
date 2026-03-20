@@ -1,0 +1,24 @@
+{
+  "name": "scientific_app",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vdo-na/scientific_app.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/vdo-na/scientific_app/issues"
+  },
+  "homepage": "https://github.com/vdo-na/scientific_app#readme",
+  "description": "",
+  "dependencies": {
+    "@faker-js/faker": "^10.3.0",
+    "mysql2": "^3.20.0",
+    "sequelize": "^6.37.8"
+  }
+}
