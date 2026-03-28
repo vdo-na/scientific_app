@@ -19,6 +19,7 @@
   "dependencies": {
     "@faker-js/faker": "^10.3.0",
     "express": "^5.2.1",
+    "ioredis": "^5.10.1",
     "mysql2": "^3.20.0",
     "sequelize": "^6.37.8"
   }
