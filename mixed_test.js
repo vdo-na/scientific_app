@@ -6,20 +6,20 @@ async function runMixedTest() {
   const instance = autocannon({
     url: 'http://localhost:3000',
     connections: 10,
-    duration: 60, // Сделаем 60 секунд для точности
-    timeout: 120000, // Таймаут как в первом тесте, т.к. база будет долго считать при MISS
+    duration: 60, 
+    timeout: 120000, 
     requests: [
       {
         method: 'GET',
         path: '/movies?start_date=2025-01-01&end_date=2025-01-31',
-        weight: 9 // 90% запросов - чтение (будут попадать в кэш, пока его не удалят)
+        weight: 9 
       },
       {
         method: 'POST',
-        path: '/movies/1/reviews', // Добавляем отзыв к первому фильму
+        path: '/movies/1/reviews', 
         body: JSON.stringify({ score: 10, content: 'Great movie!' }),
         headers: { 'Content-Type': 'application/json' },
-        weight: 1 // 10% запросов - добавление (удаляют кэш)
+        weight: 1 
       }
     ]
   });

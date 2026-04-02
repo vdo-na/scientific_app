@@ -3,20 +3,17 @@ const { Sequelize, DataTypes, Op } = require('sequelize');
 const Redis = require('ioredis');
 
 const app = express();
-const redis = new Redis(); // Подключение к Redis (по умолчанию localhost:6379)
+const redis = new Redis(); 
 const port = 3000;
 
-// Middleware для обработки JSON в POST/PUT запросах
 app.use(express.json());
 
-// 1. Подключение к БД MySQL
 const sequelize = new Sequelize('mydb', 'root', 'password', {
   host: 'localhost',
   dialect: 'mysql',
   logging: false, // Отключаем логи для чистоты эксперимента
 });
 
-// 2. Определение моделей
 const Movie = sequelize.define('Movie', {
   id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
   title: DataTypes.STRING,
@@ -35,16 +32,13 @@ const Review = sequelize.define('Review', {
 Movie.hasMany(Review, { foreignKey: 'movie_id' });
 Review.belongsTo(Movie, { foreignKey: 'movie_id' });
 
-// --- ЭНДПОИНТ 1: ПОЛУЧЕНИЕ ТОП-100 ФИЛЬМОВ (ЧТЕНИЕ С КЭШЕМ) ---
 app.get('/movies', async (req, res) => {
   const { start_date, end_date } = req.query;
   const startTime = Date.now();
   
-  // Ключ кэша зависит от диапазона дат
   const cacheKey = `movies_avg:${start_date}:${end_date}`;
 
   try {
-    // Проверка кэша в Redis
     const cachedData = await redis.get(cacheKey);
 
     if (cachedData) {
@@ -59,7 +53,6 @@ app.get('/movies', async (req, res) => {
       });
     }
 
-    // Если кэша нет - выполняем ТЯЖЕЛЫЙ ЗАПРОС (JOIN + AVG + GROUP BY)
     const resultMovies = await Movie.findAll({
       attributes: [
         'id', 'title', 'release_date',
@@ -67,7 +60,7 @@ app.get('/movies', async (req, res) => {
       ],
       include: [{
         model: Review,
-        attributes: [] // Нам нужны только данные для расчета AVG
+        attributes: [] 
       }],
       where: {
         release_date: { [Op.between]: [start_date || '2020-01-01', end_date || '2025-12-31'] }
@@ -78,7 +71,6 @@ app.get('/movies', async (req, res) => {
       subQuery: false
     });
 
-    // Сохраняем результат в Redis на 60 секунд
     await redis.set(cacheKey, JSON.stringify(resultMovies), 'EX', 60);
 
     const duration = Date.now() - startTime;
@@ -98,21 +90,17 @@ app.get('/movies', async (req, res) => {
   }
 });
 
-// --- ЭНДПОИНТ 2: ДОБАВЛЕНИЕ ОТЗЫВА (ЗАПИСЬ С ИНВАЛИДАЦИЕЙ) ---
 app.post('/movies/:id/reviews', async (req, res) => {
   const { id } = req.params;
   const { score, content } = req.body;
 
   try {
-    // 1. Добавляем новый отзыв в БД (это изменит AVG score фильма)
     await Review.create({
       movie_id: id,
       score: score || 10,
       content: content || 'Experimental review'
     });
 
-    // 2. ИНВАЛИДАЦИЯ КЭША
-    // Удаляем все ключи списков фильмов, так как средние рейтинги могли измениться
     const keys = await redis.keys('movies_avg:*');
     if (keys.length > 0) {
       await redis.del(keys);

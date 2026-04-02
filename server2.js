@@ -12,7 +12,6 @@ const sequelize = new Sequelize('mydb', 'root', 'password', {
   logging: false,
 });
 
-// Модели и связи
 const Movie = sequelize.define('Movie', {
   title: DataTypes.STRING,
   description: DataTypes.TEXT,
@@ -33,17 +32,15 @@ app.get('/movies', async (req, res) => {
   const { start_date, end_date } = req.query;
   const startTime = Date.now();
   
-  // Уникальный ключ кэша для комбинации дат
   const cacheKey = `movies_avg:${start_date}:${end_date}`;
 
   try {
-    // 1. Пытаемся получить данные из Redis
     const cachedData = await redis.get(cacheKey);
 
     if (cachedData) {
       const duration = Date.now() - startTime;
       res.set('X-Response-Time', `${duration}ms`);
-      res.set('X-Cache', 'HIT'); // Флаг: Данные из кэша
+      res.set('X-Cache', 'HIT');
       console.log(`[REDIS HIT] Запрос обработан за ${duration}ms`);
       
       return res.json({
@@ -53,7 +50,6 @@ app.get('/movies', async (req, res) => {
       });
     }
 
-    // 2. Если в кэше пусто - идем в тяжелую БД (MySQL)
     const resultMovies = await Movie.findAll({
       attributes: [
         'id', 'title', 'release_date',
@@ -69,7 +65,6 @@ app.get('/movies', async (req, res) => {
       subQuery: false
     });
 
-    // 3. Сохраняем результат в Redis на 60 секунд (TTL)
     await redis.set(cacheKey, JSON.stringify(resultMovies), 'EX', 60);
 
     const duration = Date.now() - startTime;

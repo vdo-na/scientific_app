@@ -33,7 +33,6 @@ async function seedDatabase() {
       for (let j = 0; j < chunkSize; j++) {
         moviesData.push({
           title: faker.commerce.productName(),
-          // УВЕЛИЧИЛИ: теперь 20 параграфов текста (было 5)
           description: faker.lorem.paragraphs(20), 
           release_date: faker.date.between({ from: '2020-01-01', to: '2025-12-31' }),
           rating: parseFloat((Math.random() * 10).toFixed(1))
@@ -44,12 +43,10 @@ async function seedDatabase() {
 
       const reviewsData = [];
       createdMovies.forEach(movie => {
-        // УВЕЛИЧИЛИ: теперь от 15 до 20 отзывов на каждый фильм
         const reviewsCount = Math.floor(Math.random() * 6) + 15; 
         for (let k = 0; k < reviewsCount; k++) {
           reviewsData.push({
             movie_id: movie.id,
-            // УВЕЛИЧИЛИ: каждый отзыв теперь длиннее
             content: faker.lorem.sentences(10),
             score: Math.floor(Math.random() * 10) + 1
           });
@@ -60,7 +57,7 @@ async function seedDatabase() {
       console.log(`Прогресс: ${i + chunkSize} / ${totalMovies} фильмов загружено...`);
     }
 
-    console.log('--- Готово! Теперь база должна весить около 700-900 Мб. ---');
+    console.log('Готово!');
     process.exit();
   } catch (error) {
     console.error('Ошибка:', error);
