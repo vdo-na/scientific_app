@@ -10,8 +10,7 @@ const sequelize = new Sequelize('mydb', 'root', 'password', {
 const Movie = sequelize.define('Movie', {
   title: DataTypes.STRING,
   description: DataTypes.TEXT('long'), 
-  release_date: DataTypes.DATEONLY,
-  rating: DataTypes.FLOAT
+  release_date: DataTypes.DATEONLY
 }, { timestamps: false, tableName: 'movies' });
 
 const Review = sequelize.define('Review', {
@@ -23,7 +22,7 @@ const Review = sequelize.define('Review', {
 async function seedDatabase() {
   try {
     await sequelize.sync({ force: true });
-    console.log('--- Начинаю глубокое заполнение базы (> 600 Мб)... ---');
+    console.log('Заполнение базы');
 
     const totalMovies = 100000;
     const chunkSize = 1000;
@@ -34,8 +33,7 @@ async function seedDatabase() {
         moviesData.push({
           title: faker.commerce.productName(),
           description: faker.lorem.paragraphs(20), 
-          release_date: faker.date.between({ from: '2020-01-01', to: '2025-12-31' }),
-          rating: parseFloat((Math.random() * 10).toFixed(1))
+          release_date: faker.date.between({ from: '2020-01-01', to: '2025-12-31' })
         });
       }
 

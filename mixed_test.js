@@ -1,25 +1,45 @@
 const autocannon = require('autocannon');
 
+function getRandomDateRange() {
+  const year = 2025;
+  const monthStr = '03'; 
+  const startDay = Math.floor(Math.random() * 10) + 1;
+  const endDay = Math.floor(Math.random() * 11) + 20;
+  
+  return {
+    start: `${year}-${monthStr}-${String(startDay).padStart(2, '0')}`,
+    end: `${year}-${monthStr}-${String(endDay).padStart(2, '0')}`
+  };
+}
+
 async function runMixedTest() {
-  console.log('Запуск смешанной нагрузки: 90% чтение / 10% добавление отзывов...');
+  console.log('Запуск нагрузки');
 
   const instance = autocannon({
     url: 'http://localhost:3000',
     connections: 10,
-    duration: 60, 
-    timeout: 120000, 
+    duration: 120,
+    timeout: 120000,
     requests: [
       {
         method: 'GET',
-        path: '/movies?start_date=2025-01-01&end_date=2025-01-31',
-        weight: 9 
+        setupRequest: (request) => {
+          const dates = getRandomDateRange();
+          request.path = `/movies?start_date=${dates.start}&end_date=${dates.end}`;
+          return request;
+        },
+        weight: 9999
       },
       {
         method: 'POST',
-        path: '/movies/1/reviews', 
-        body: JSON.stringify({ score: 10, content: 'Great movie!' }),
-        headers: { 'Content-Type': 'application/json' },
-        weight: 1 
+        setupRequest: (request) => {
+          const randomMovieId = Math.floor(Math.random() * 100000) + 1;
+          request.path = `/movies/${randomMovieId}/reviews`;
+          request.body = JSON.stringify({ score: 10, content: 'Ultra rare update' });
+          request.headers = { 'Content-Type': 'application/json' };
+          return request;
+        },
+        weight: 1
       }
     ]
   });
@@ -27,10 +47,9 @@ async function runMixedTest() {
   autocannon.track(instance, { renderProgressBar: true });
 
   const result = await instance;
-  console.log('\n--- РЕЗУЛЬТАТЫ ЭКСПЕРИМЕНТА №3 (ИНВАЛИДАЦИЯ) ---');
-  console.log(`Среднее время ответа (Latency): ${result.latency.average} ms`);
-  console.log(`Запросов в секунду (RPS): ${result.requests.average}`);
-  console.log(`Всего запросов: ${result.requests.total}`);
+  console.log('\n--- ИТОГИ (0.1% ЗАПИСИ) ---');
+  console.log(`Avg Latency: ${result.latency.average} ms`);
+  console.log(`Avg RPS: ${result.requests.average}`);
 }
 
 runMixedTest();

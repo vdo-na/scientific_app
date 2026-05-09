@@ -8,10 +8,19 @@ const port = 3000;
 
 app.use(express.json());
 
+let cacheHits = 0;
+let cacheMisses = 0;
+
 const sequelize = new Sequelize('mydb', 'root', 'password', {
   host: 'localhost',
   dialect: 'mysql',
-  logging: false, // Отключаем логи для чистоты эксперимента
+  logging: false,
+  pool: {
+    max: 30,
+    min: 5,
+    acquire: 120000,
+    idle: 10000
+  }
 });
 
 const Movie = sequelize.define('Movie', {
@@ -28,30 +37,31 @@ const Review = sequelize.define('Review', {
   score: { type: DataTypes.INTEGER, allowNull: false }
 }, { timestamps: false, tableName: 'reviews' });
 
-// Установка связей для JOIN
 Movie.hasMany(Review, { foreignKey: 'movie_id' });
 Review.belongsTo(Movie, { foreignKey: 'movie_id' });
 
 app.get('/movies', async (req, res) => {
   const { start_date, end_date } = req.query;
   const startTime = Date.now();
-  
   const cacheKey = `movies_avg:${start_date}:${end_date}`;
 
   try {
     const cachedData = await redis.get(cacheKey);
 
     if (cachedData) {
+      cacheHits++;
+      
       const duration = Date.now() - startTime;
       res.set('X-Response-Time', `${duration}ms`);
       res.set('X-Cache', 'HIT');
-      console.log(`[CACHE HIT] Отдано из Redis за ${duration}ms`);
       return res.json({
         executionTime: `${duration}ms`,
         source: 'Redis (Cache)',
         data: JSON.parse(cachedData)
       });
     }
+
+    cacheMisses++;
 
     const resultMovies = await Movie.findAll({
       attributes: [
@@ -63,12 +73,13 @@ app.get('/movies', async (req, res) => {
         attributes: [] 
       }],
       where: {
-        release_date: { [Op.between]: [start_date || '2020-01-01', end_date || '2025-12-31'] }
+        release_date: { [Op.between]: [start_date || '2025-01-01', end_date || '2025-12-31'] }
       },
       group: ['Movie.id'],
       order: [[sequelize.literal('avg_score'), 'DESC']],
       limit: 100,
-      subQuery: false
+      subQuery: false,
+      raw: true 
     });
 
     await redis.set(cacheKey, JSON.stringify(resultMovies), 'EX', 60);
@@ -76,7 +87,6 @@ app.get('/movies', async (req, res) => {
     const duration = Date.now() - startTime;
     res.set('X-Response-Time', `${duration}ms`);
     res.set('X-Cache', 'MISS');
-    console.log(`[DB MISS] Тяжелый запрос в MySQL за ${duration}ms`);
     
     res.json({
       executionTime: `${duration}ms`,
@@ -85,7 +95,7 @@ app.get('/movies', async (req, res) => {
     });
 
   } catch (error) {
-    console.error(error);
+    console.error("Ошибка GET:", error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
@@ -106,15 +116,26 @@ app.post('/movies/:id/reviews', async (req, res) => {
       await redis.del(keys);
     }
 
-    console.log(`[INVALIDATION] Добавлен отзыв к фильму ${id}. Кэш списков очищен.`);
     res.status(201).json({ message: 'Отзыв добавлен, кэш инвалидирован' });
 
   } catch (error) {
-    console.error(error);
+    console.error("Ошибка POST:", error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
-app.listen(port, () => {
+setInterval(() => {
+  const total = cacheHits + cacheMisses;
+  const hitRatio = total > 0 ? ((cacheHits / total) * 100).toFixed(2) : 0;
+  console.log(`\n=== ТЕКУЩАЯ ЭФФЕКТИВНОСТЬ КЭША ===`);
+  console.log(`Запросов всего: ${total}`);
+  console.log(`Попаданий (HIT): ${cacheHits}`);
+  console.log(`Промахов (MISS): ${cacheMisses}`);
+  console.log(`Hit Ratio: ${hitRatio}%`);
+  console.log(`==================================\n`);
+}, 10000);
+
+const server = app.listen(port, () => {
   console.log(`Сервер запущен: http://localhost:${port}`);
 });
+server.timeout = 300000;

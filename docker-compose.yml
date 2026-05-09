@@ -21,6 +21,11 @@ services:
     container_name: redis_test
     ports:
       - "6379:6379"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
 
 volumes:
   db_data:
