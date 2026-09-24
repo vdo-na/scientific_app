@@ -28,7 +28,7 @@ async function runMixedTest() {
           request.path = `/movies?start_date=${dates.start}&end_date=${dates.end}`;
           return request;
         },
-        weight: 9999
+        weight: 90
       },
       {
         method: 'POST',
@@ -39,7 +39,7 @@ async function runMixedTest() {
           request.headers = { 'Content-Type': 'application/json' };
           return request;
         },
-        weight: 1
+        weight: 10
       }
     ]
   });
@@ -47,9 +47,9 @@ async function runMixedTest() {
   autocannon.track(instance, { renderProgressBar: true });
 
   const result = await instance;
-  console.log('\n--- ИТОГИ (0.1% ЗАПИСИ) ---');
-  console.log(`Avg Latency: ${result.latency.average} ms`);
-  console.log(`Avg RPS: ${result.requests.average}`);
+  console.log('\nРЕЗУЛЬТАТЫ ЭКСПЕРИМЕНТА №3');
+  console.log(`Среднее время ответа (Avg Latency): ${result.latency.average} ms`);
+  console.log(`Запросов в секунду (Avg RPS): ${result.requests.average}`);
 }
 
 runMixedTest();

@@ -78,6 +78,34 @@ app.post('/movies/:id/reviews', async (req, res) => {
   }
 });
 
+const pidusage = require('pidusage');
+
+let backendCpuPeak = 0;
+let backendRamPeak = 0;
+
+// Замеряем ресурсы каждую секунду
+setInterval(async () => {
+  try {
+    const stats = await pidusage(process.pid);
+    
+    // Обновляем пиковые значения, если текущие выше
+    if (stats.cpu > backendCpuPeak) backendCpuPeak = stats.cpu;
+    
+    const currentRam = stats.memory / 1024 / 1024; // перевод в Мб
+    if (currentRam > backendRamPeak) backendRamPeak = currentRam;
+  } catch (err) {
+    console.error(err);
+  }
+}, 1000);
+
+// Выводим финальные пики при остановке теста (или по интервалу)
+setInterval(() => {
+  console.log(`\n=== МОНИТОРИНГ БЭКЕНДА (ПИКОВЫЕ ЗНАЧЕНИЯ) ===`);
+  console.log(`Пиковый CPU: ${backendCpuPeak.toFixed(2)}%`);
+  console.log(`Пиковая ОЗУ: ${backendRamPeak.toFixed(2)} Мб`);
+  console.log(`============================================\n`);
+}, 10000); // выводит статистику каждые 10 секунд
+
 app.listen(port, () => {
   console.log(`Сервер 1 (БЕЗ КЕША) запущен на порту ${port}`);
 });

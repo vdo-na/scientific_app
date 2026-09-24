@@ -40,9 +40,12 @@ const Review = sequelize.define('Review', {
 Movie.hasMany(Review, { foreignKey: 'movie_id' });
 Review.belongsTo(Movie, { foreignKey: 'movie_id' });
 
+// --- ЭНДПОИНТ ЧТЕНИЯ ---
 app.get('/movies', async (req, res) => {
   const { start_date, end_date } = req.query;
   const startTime = Date.now();
+  
+  // Формат ключа: movies_avg:YYYY-MM-DD:YYYY-MM-DD
   const cacheKey = `movies_avg:${start_date}:${end_date}`;
 
   try {
@@ -50,7 +53,6 @@ app.get('/movies', async (req, res) => {
 
     if (cachedData) {
       cacheHits++;
-      
       const duration = Date.now() - startTime;
       res.set('X-Response-Time', `${duration}ms`);
       res.set('X-Cache', 'HIT');
@@ -100,23 +102,56 @@ app.get('/movies', async (req, res) => {
   }
 });
 
+// --- ЭНДПОИНТ ЗАПИСИ (С УМНОЙ ИНВАЛИДАЦИЕЙ) ---
 app.post('/movies/:id/reviews', async (req, res) => {
   const { id } = req.params;
   const { score, content } = req.body;
 
   try {
+    // 1. Находим фильм, чтобы узнать его дату релиза
+    const movie = await Movie.findByPk(id);
+    if (!movie) {
+      return res.status(404).json({ error: 'Movie not found' });
+    }
+    const movieDate = movie.release_date;
+
+    // 2. Создаем отзыв в БД
     await Review.create({
       movie_id: id,
       score: score || 10,
       content: content || 'Experimental review'
     });
 
-    const keys = await redis.keys('movies_avg:*');
-    if (keys.length > 0) {
-      await redis.del(keys);
+    // 3. УМНАЯ ИНВАЛИДАЦИЯ
+    // Получаем все ключи, относящиеся к средним рейтингам
+    const allKeys = await redis.keys('movies_avg:*');
+    const keysToDelete = [];
+
+    for (const key of allKeys) {
+      // Ключ имеет формат "movies_avg:START:END"
+      // Разрезаем строку по двоеточию
+      const parts = key.split(':');
+      if (parts.length === 3) {
+        const cacheStart = parts[1];
+        const cacheEnd = parts[2];
+
+        // Проверяем: входит ли дата релиза фильма в диапазон этого ключа?
+        // Сравнение строк дат (YYYY-MM-DD) работает корректно
+        if (movieDate >= cacheStart && movieDate <= cacheEnd) {
+          keysToDelete.push(key);
+        }
+      }
     }
 
-    res.status(201).json({ message: 'Отзыв добавлен, кэш инвалидирован' });
+    // Удаляем только затронутые ключи
+    if (keysToDelete.length > 0) {
+      await redis.del(keysToDelete);
+      console.log(`[INVALIDATION] Удалено ключей: ${keysToDelete.length} для даты ${movieDate}`);
+    } else {
+      console.log(`[INVALIDATION] Изменение даты ${movieDate} не затронуло существующий кеш.`);
+    }
+
+    res.status(201).json({ message: 'Отзыв добавлен, кеш выборочно очищен' });
 
   } catch (error) {
     console.error("Ошибка POST:", error);
@@ -134,6 +169,34 @@ setInterval(() => {
   console.log(`Hit Ratio: ${hitRatio}%`);
   console.log(`==================================\n`);
 }, 10000);
+
+const pidusage = require('pidusage');
+
+let backendCpuPeak = 0;
+let backendRamPeak = 0;
+
+// Замеряем ресурсы каждую секунду
+setInterval(async () => {
+  try {
+    const stats = await pidusage(process.pid);
+    
+    // Обновляем пиковые значения, если текущие выше
+    if (stats.cpu > backendCpuPeak) backendCpuPeak = stats.cpu;
+    
+    const currentRam = stats.memory / 1024 / 1024; // перевод в Мб
+    if (currentRam > backendRamPeak) backendRamPeak = currentRam;
+  } catch (err) {
+    console.error(err);
+  }
+}, 1000);
+
+// Выводим финальные пики при остановке теста (или по интервалу)
+setInterval(() => {
+  console.log(`\n=== МОНИТОРИНГ БЭКЕНДА (ПИКОВЫЕ ЗНАЧЕНИЯ) ===`);
+  console.log(`Пиковый CPU: ${backendCpuPeak.toFixed(2)}%`);
+  console.log(`Пиковая ОЗУ: ${backendRamPeak.toFixed(2)} Мб`);
+  console.log(`============================================\n`);
+}, 10000); // выводит статистику каждые 10 секунд
 
 const server = app.listen(port, () => {
   console.log(`Сервер запущен: http://localhost:${port}`);
