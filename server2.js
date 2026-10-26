@@ -1,15 +1,27 @@
 const express = require('express');
 const { Sequelize, DataTypes, Op } = require('sequelize');
 const Redis = require('ioredis');
+const pidusage = require('pidusage');
 
 const app = express();
 const port = 3000;
 
 app.use(express.json()); 
 
+// ====================================================================
+// ВАЖНО: ЗДЕСЬ МЕНЯЕМ TTL ДЛЯ КАЖДОГО ЭКСПЕРИМЕНТА (в секундах)
+// Например: 2, 10, 30, 60, 120
+// ====================================================================
+const CURRENT_TTL = parseInt(process.env.CACHE_TTL, 10) || 100;
+
 // --- СЧЕТЧИКИ ДЛЯ ПРОВЕРКИ ЭФФЕКТИВНОСТИ ---
 let cacheHits = 0;
 let cacheMisses = 0;
+
+// --- СЧЕТЧИКИ АКТУАЛЬНОСТИ (КРИТЕРИЙ 1 ДЛЯ МАИ / TOPSIS) ---
+let freshResponses = 0; // Актуальные ответы
+let staleResponses = 0; // Устаревшие ответы
+let lastDbWriteTime = 0; // Время последней записи в БД
 
 const redis = new Redis({
   retryStrategy: (times) => Math.min(times * 50, 2000), 
@@ -44,26 +56,43 @@ const Review = sequelize.define('Review', {
 Movie.hasMany(Review, { foreignKey: 'movie_id' });
 Review.belongsTo(Movie, { foreignKey: 'movie_id' });
 
+// ==========================================
+// ЭНДПОИНТ ЧТЕНИЯ (GET)
+// ==========================================
 app.get('/movies', async (req, res) => {
   const { start_date, end_date } = req.query;
   const startTime = Date.now();
   const cacheKey = `movies_avg:${start_date}:${end_date}`;
 
   try {
-    const cachedData = await redis.get(cacheKey);
+    const rawCached = await redis.get(cacheKey);
 
-    if (cachedData) {
-      // УВЕЛИЧИВАЕМ СЧЕТЧИК ПОПАДАНИЙ
+    if (rawCached) {
       cacheHits++;
+
+      const cachedPayload = JSON.parse(rawCached);
+
+      // ПРОВЕРКА НА АКТУАЛЬНОСТЬ (СВЕЖЕСТЬ) ДАННЫХ
+      // Если запись в БД произошла ПОСЛЕ того, как кеш был создан -> данные устарели
+      if (lastDbWriteTime > cachedPayload.cachedAt) {
+        staleResponses++; // Устаревший ответ
+      } else {
+        freshResponses++; // Актуальный ответ
+      }
 
       const duration = Date.now() - startTime;
       res.set('X-Response-Time', `${duration}ms`);
       res.set('X-Cache', 'HIT');
-      return res.json({ executionTime: `${duration}ms`, source: 'Redis', data: JSON.parse(cachedData) });
+      return res.json({ 
+        executionTime: `${duration}ms`, 
+        source: 'Redis', 
+        data: cachedPayload.data 
+      });
     }
 
-    // УВЕЛИЧИВАЕМ СЧЕТЧИК ПРОМАХОВ
+    // ПРОМАХ (MISS) -> идем в БД, следовательно данные 100% актуальные
     cacheMisses++;
+    freshResponses++;
 
     const resultMovies = await Movie.findAll({
       attributes: [
@@ -81,8 +110,13 @@ app.get('/movies', async (req, res) => {
       raw: true, 
     });
 
-    // Сохраняем в Redis на 60 секунд (TTL)
-    await redis.set(cacheKey, JSON.stringify(resultMovies), 'EX', 60);
+    // Сохраняем в кеш объект с датой создания
+    const payloadToCache = {
+      cachedAt: Date.now(),
+      data: resultMovies
+    };
+
+    await redis.set(cacheKey, JSON.stringify(payloadToCache), 'EX', CURRENT_TTL);
 
     const duration = Date.now() - startTime;
     res.set('X-Response-Time', `${duration}ms`);
@@ -95,12 +129,19 @@ app.get('/movies', async (req, res) => {
   }
 });
 
+// ==========================================
+// ЭНДПОИНТ ЗАПИСИ (POST)
+// ==========================================
 app.post('/movies/:id/reviews', async (req, res) => {
   try {
     const { id } = req.params;
     const { score, content } = req.body;
-    // Просто записываем в БД. В эксперименте №2 (TTL) инвалидация (удаление) кеша НЕ проводится.
+
     await Review.create({ movie_id: id, score: score || 10, content: content || 'Test' });
+
+    // ФИКСИРУЕМ ВРЕМЯ ПОСЛЕДНЕЙ ЗАПИСИ В БД
+    lastDbWriteTime = Date.now();
+
     res.status(201).json({ message: 'OK' });
   } catch (error) {
     console.log("!!! ОШИБКА POST:", error.message);
@@ -108,45 +149,38 @@ app.post('/movies/:id/reviews', async (req, res) => {
   }
 });
 
-// --- АВТОМАТИЧЕСКИЙ ВЫВОД СТАТИСТИКИ КАЖДЫЕ 10 СЕКУНД ---
+// ==========================================
+// МОНИТОРИНГ И ВЫВОД РЕЗУЛЬТАТОВ ДЛЯ СТАТЬИ
+// ==========================================
 setInterval(() => {
   const total = cacheHits + cacheMisses;
   const hitRatio = total > 0 ? ((cacheHits / total) * 100).toFixed(2) : 0;
-  console.log(`\n=== ТЕКУЩАЯ ЭФФЕКТИВНОСТЬ КЭША (TTL) ===`);
-  console.log(`Запросов всего: ${total}`);
-  console.log(`Попаданий (HIT): ${cacheHits}`);
-  console.log(`Промахов (MISS): ${cacheMisses}`);
-  console.log(`Hit Ratio: ${hitRatio}%`);
-  console.log(`========================================\n`);
-}, 10000);
+  
+  const totalResponses = freshResponses + staleResponses;
+  const freshnessRatio = totalResponses > 0 ? ((freshResponses / totalResponses) * 100).toFixed(2) : 100;
 
-const pidusage = require('pidusage');
+  console.log(`\n======================================================`);
+  console.log(`ТЕКУЩИЕ РЕЗУЛЬТАТЫ (TTL = ${CURRENT_TTL}s):`);
+  console.log(`[Критерий 1] Свежесть данных: ${freshnessRatio}% (Свежих: ${freshResponses}, Устаревших: ${staleResponses})`);
+  console.log(`[Кэш] Hit Ratio: ${hitRatio}% (Хитов: ${cacheHits}, Промахов: ${cacheMisses})`);
+  console.log(`======================================================\n`);
+}, 10000);
 
 let backendCpuPeak = 0;
 let backendRamPeak = 0;
 
-// Замеряем ресурсы каждую секунду
 setInterval(async () => {
   try {
     const stats = await pidusage(process.pid);
-    
-    // Обновляем пиковые значения, если текущие выше
     if (stats.cpu > backendCpuPeak) backendCpuPeak = stats.cpu;
-    
-    const currentRam = stats.memory / 1024 / 1024; // перевод в Мб
+    const currentRam = stats.memory / 1024 / 1024;
     if (currentRam > backendRamPeak) backendRamPeak = currentRam;
   } catch (err) {
-    console.error(err);
+    // игнорируем разовые ошибки замера
   }
 }, 1000);
 
-// Выводим финальные пики при остановке теста (или по интервалу)
-setInterval(() => {
-  console.log(`\n=== МОНИТОРИНГ БЭКЕНДА (ПИКОВЫЕ ЗНАЧЕНИЯ) ===`);
-  console.log(`Пиковый CPU: ${backendCpuPeak.toFixed(2)}%`);
-  console.log(`Пиковая ОЗУ: ${backendRamPeak.toFixed(2)} Мб`);
-  console.log(`============================================\n`);
-}, 10000); // выводит статистику каждые 10 секунд
-
-const server = app.listen(port, () => console.log(`Сервер 2 (TTL) запущен на порту ${port}`));
+const server = app.listen(port, () => {
+  console.log(`\n>>> Сервер запущен на порту ${port} с TTL = ${CURRENT_TTL} сек <<<`);
+});
 server.timeout = 300000;
